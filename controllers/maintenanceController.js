@@ -10,18 +10,18 @@ const getMaintenanceRecords = async (req, res) => {
   try {
     const { companyId } = req.user;
     const { status, truckId, startDate, endDate } = req.query;
-    
+
     // Build the where clause
     const where = { companyId };
-    
+
     if (status) {
       where.status = status;
     }
-    
+
     if (truckId) {
       where.truckId = truckId;
     }
-    
+
     if (startDate && endDate) {
       where.startDate = {
         [Op.between]: [startDate, endDate]
@@ -35,7 +35,7 @@ const getMaintenanceRecords = async (req, res) => {
         [Op.lte]: endDate
       };
     }
-    
+
     // Get all maintenance records for the company
     const maintenanceRecords = await Maintenance.findAll({
       where,
@@ -48,7 +48,7 @@ const getMaintenanceRecords = async (req, res) => {
       ],
       order: [['startDate', 'DESC']]
     });
-    
+
     res.json({
       success: true,
       maintenanceRecords
@@ -72,7 +72,7 @@ const getMaintenanceRecord = async (req, res) => {
   try {
     const { companyId } = req.user;
     const { id } = req.params;
-    
+
     // Get the maintenance record
     const maintenanceRecord = await Maintenance.findOne({
       where: { id, companyId },
@@ -84,14 +84,14 @@ const getMaintenanceRecord = async (req, res) => {
         }
       ]
     });
-    
+
     if (!maintenanceRecord) {
       return res.status(404).json({
         success: false,
         message: 'Maintenance record not found'
       });
     }
-    
+
     res.json({
       success: true,
       maintenanceRecord
@@ -125,7 +125,7 @@ const createMaintenanceRecord = async (req, res) => {
       notes,
       performedBy
     } = req.body;
-    
+
     // Validate required fields
     if (!truckId || !maintenanceType || !startDate || !status) {
       return res.status(400).json({
@@ -133,19 +133,19 @@ const createMaintenanceRecord = async (req, res) => {
         message: 'Missing required fields'
       });
     }
-    
+
     // Check if the truck exists and belongs to the company
     const truck = await Truck.findOne({
       where: { id: truckId, companyId }
     });
-    
+
     if (!truck) {
       return res.status(404).json({
         success: false,
         message: 'Truck not found or does not belong to your company'
       });
     }
-    
+
     // Create the maintenance record
     const maintenanceRecord = await Maintenance.create({
       companyId,
@@ -159,12 +159,12 @@ const createMaintenanceRecord = async (req, res) => {
       notes,
       performedBy
     });
-    
+
     // If the maintenance is in progress, update the truck status
     if (status === 'in_progress') {
       await truck.update({ status: 'maintenance' });
     }
-    
+
     res.status(201).json({
       success: true,
       message: 'Maintenance record created successfully',
@@ -200,7 +200,7 @@ const updateMaintenanceRecord = async (req, res) => {
       notes,
       performedBy
     } = req.body;
-    
+
     // Find the maintenance record
     const maintenanceRecord = await Maintenance.findOne({
       where: { id, companyId },
@@ -211,20 +211,20 @@ const updateMaintenanceRecord = async (req, res) => {
         }
       ]
     });
-    
+
     if (!maintenanceRecord) {
       return res.status(404).json({
         success: false,
         message: 'Maintenance record not found'
       });
     }
-    
+
     // If truckId is changing, check if the new truck exists and belongs to the company
     if (truckId && truckId !== maintenanceRecord.truckId) {
       const truck = await Truck.findOne({
         where: { id: truckId, companyId }
       });
-      
+
       if (!truck) {
         return res.status(404).json({
           success: false,
@@ -232,7 +232,7 @@ const updateMaintenanceRecord = async (req, res) => {
         });
       }
     }
-    
+
     // Update the maintenance record
     await maintenanceRecord.update({
       truckId: truckId || maintenanceRecord.truckId,
@@ -245,21 +245,22 @@ const updateMaintenanceRecord = async (req, res) => {
       notes: notes !== undefined ? notes : maintenanceRecord.notes,
       performedBy: performedBy !== undefined ? performedBy : maintenanceRecord.performedBy
     });
-    
+
     // Handle truck status changes based on maintenance status
     if (status && status !== maintenanceRecord.status) {
+      // Get the truck associated with this maintenance record
       const truck = await Truck.findByPk(maintenanceRecord.truckId);
-      
+
       if (truck) {
         if (status === 'in_progress') {
           await truck.update({ status: 'maintenance' });
-        } else if (status === 'completed' && truck.status === 'maintenance') {
-          // Only change back to active if it's currently in maintenance
-          await truck.update({ status: 'active' });
+        } else if (status === 'completed') {
+          // Always set to inactive when maintenance is completed, regardless of current status
+          await truck.update({ status: 'inactive' });
         }
       }
     }
-    
+
     res.json({
       success: true,
       message: 'Maintenance record updated successfully',
@@ -284,22 +285,22 @@ const deleteMaintenanceRecord = async (req, res) => {
   try {
     const { companyId } = req.user;
     const { id } = req.params;
-    
+
     // Find the maintenance record
     const maintenanceRecord = await Maintenance.findOne({
       where: { id, companyId }
     });
-    
+
     if (!maintenanceRecord) {
       return res.status(404).json({
         success: false,
         message: 'Maintenance record not found'
       });
     }
-    
+
     // Delete the maintenance record
     await maintenanceRecord.destroy();
-    
+
     res.json({
       success: true,
       message: 'Maintenance record deleted successfully'
