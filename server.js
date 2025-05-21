@@ -10,10 +10,11 @@ dotenv.config();
 // Import database and models
 const { testConnection } = require('./config/database');
 const { initializeDatabase } = require('./utils/initDb');
-const { Company, User, Truck, Driver } = require('./models');
+const { Company, User, Truck, Driver, Maintenance } = require('./models');
 
 // Import controllers and middleware
 const authController = require('./controllers/authController');
+const maintenanceController = require('./controllers/maintenanceController');
 const { verifyToken, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
 
 const app = express();
@@ -737,6 +738,22 @@ app.get('/api/users', verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
+
+// Maintenance Records
+// Get all maintenance records for a company
+app.get('/api/maintenance', verifyToken, maintenanceController.getMaintenanceRecords);
+
+// Get a single maintenance record by ID
+app.get('/api/maintenance/:id', verifyToken, maintenanceController.getMaintenanceRecord);
+
+// Create a new maintenance record
+app.post('/api/maintenance', verifyToken, maintenanceController.createMaintenanceRecord);
+
+// Update a maintenance record
+app.put('/api/maintenance/:id', verifyToken, maintenanceController.updateMaintenanceRecord);
+
+// Delete a maintenance record
+app.delete('/api/maintenance/:id', verifyToken, maintenanceController.deleteMaintenanceRecord);
 
 // Initialize database and start the server
 (async () => {
