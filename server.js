@@ -239,6 +239,237 @@ app.get('/api/trucks', verifyToken, async (req, res) => {
   }
 });
 
+// Create a new truck
+app.post('/api/trucks', verifyToken, async (req, res) => {
+  try {
+    // Extract truck data from request body
+    const {
+      companyId,
+      name,
+      numberPlate,
+      make,
+      model,
+      year,
+      status,
+      route,
+      cargoType,
+      roadTaxDate,
+      insuranceDate,
+      fitnessDate,
+      comesaExpiryDate,
+      nextMaintenance,
+      currentDriverId
+    } = req.body;
+
+    // Validate required fields
+    if (!companyId || !name || !numberPlate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: companyId, name, and numberPlate are required'
+      });
+    }
+
+    // Check if a truck with the same number plate already exists
+    const existingTruck = await Truck.findOne({ where: { numberPlate } });
+    if (existingTruck) {
+      return res.status(409).json({
+        success: false,
+        error: 'A truck with this number plate already exists'
+      });
+    }
+
+    // Create the truck
+    const newTruck = await Truck.create({
+      companyId,
+      name,
+      numberPlate,
+      make,
+      model,
+      year,
+      status: status || 'inactive', // Default to inactive if not provided
+      route,
+      cargoType,
+      lastUpdate: new Date(),
+      roadTaxDate,
+      insuranceDate,
+      fitnessDate,
+      comesaExpiryDate,
+      nextMaintenance,
+      currentDriverId
+    });
+
+    // Fetch the created truck with its company information
+    const truckWithCompany = await Truck.findByPk(newTruck.id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // Return the created truck
+    res.status(201).json(truckWithCompany);
+  } catch (error) {
+    console.error('Error creating truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create truck',
+      details: error.message
+    });
+  }
+});
+
+// Get a single truck by ID
+app.get('/api/trucks/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the truck by ID
+    const truck = await Truck.findByPk(id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // If truck not found, return 404
+    if (!truck) {
+      return res.status(404).json({
+        success: false,
+        error: 'Truck not found'
+      });
+    }
+
+    // Return the truck
+    res.json(truck);
+  } catch (error) {
+    console.error('Error fetching truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch truck',
+      details: error.message
+    });
+  }
+});
+
+// Update a truck
+app.put('/api/trucks/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the truck by ID
+    const truck = await Truck.findByPk(id);
+
+    // If truck not found, return 404
+    if (!truck) {
+      return res.status(404).json({
+        success: false,
+        error: 'Truck not found'
+      });
+    }
+
+    // Extract truck data from request body
+    const {
+      companyId,
+      name,
+      numberPlate,
+      make,
+      model,
+      year,
+      status,
+      route,
+      cargoType,
+      roadTaxDate,
+      insuranceDate,
+      fitnessDate,
+      comesaExpiryDate,
+      nextMaintenance,
+      currentDriverId
+    } = req.body;
+
+    // Validate required fields
+    if (!companyId || !name || !numberPlate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: companyId, name, and numberPlate are required'
+      });
+    }
+
+    // If number plate is changed, check if it already exists
+    if (numberPlate !== truck.numberPlate) {
+      const existingTruck = await Truck.findOne({ where: { numberPlate } });
+      if (existingTruck) {
+        return res.status(409).json({
+          success: false,
+          error: 'A truck with this number plate already exists'
+        });
+      }
+    }
+
+    // Update the truck
+    await truck.update({
+      companyId,
+      name,
+      numberPlate,
+      make,
+      model,
+      year,
+      status,
+      route,
+      cargoType,
+      lastUpdate: new Date(),
+      roadTaxDate,
+      insuranceDate,
+      fitnessDate,
+      comesaExpiryDate,
+      nextMaintenance,
+      currentDriverId
+    });
+
+    // Fetch the updated truck with its company information
+    const updatedTruck = await Truck.findByPk(id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // Return the updated truck
+    res.json(updatedTruck);
+  } catch (error) {
+    console.error('Error updating truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update truck',
+      details: error.message
+    });
+  }
+});
+
+// Delete a truck
+app.delete('/api/trucks/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the truck by ID
+    const truck = await Truck.findByPk(id);
+
+    // If truck not found, return 404
+    if (!truck) {
+      return res.status(404).json({
+        success: false,
+        error: 'Truck not found'
+      });
+    }
+
+    // Delete the truck
+    await truck.destroy();
+
+    // Return success message
+    res.json({
+      success: true,
+      message: 'Truck deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete truck',
+      details: error.message
+    });
+  }
+});
+
 // Drivers
 app.get('/api/drivers', verifyToken, async (req, res) => {
   try {
@@ -251,6 +482,243 @@ app.get('/api/drivers', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching drivers:', error);
     res.status(500).json({ error: 'Failed to fetch drivers' });
+  }
+});
+
+// Get a single driver by ID
+app.get('/api/drivers/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the driver by ID
+    const driver = await Driver.findByPk(id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // If driver not found, return 404
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    // Return the driver
+    res.json(driver);
+  } catch (error) {
+    console.error('Error fetching driver:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch driver',
+      details: error.message
+    });
+  }
+});
+
+// Create a new driver
+app.post('/api/drivers', verifyToken, async (req, res) => {
+  try {
+    // Extract driver data from request body
+    const {
+      companyId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      licenseNumber,
+      licenseExpiry,
+      dateOfBirth,
+      address,
+      city,
+      state,
+      country,
+      postalCode,
+      emergencyContactName,
+      emergencyContactPhone,
+      status,
+      notes
+    } = req.body;
+
+    // Validate required fields
+    if (!companyId || !firstName || !lastName || !licenseNumber || !licenseExpiry) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: companyId, firstName, lastName, licenseNumber, and licenseExpiry are required'
+      });
+    }
+
+    // Check if a driver with the same license number already exists
+    const existingDriver = await Driver.findOne({ where: { licenseNumber } });
+    if (existingDriver) {
+      return res.status(409).json({
+        success: false,
+        error: 'A driver with this license number already exists'
+      });
+    }
+
+    // Create the driver
+    const newDriver = await Driver.create({
+      companyId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      licenseNumber,
+      licenseExpiry,
+      dateOfBirth,
+      address,
+      city,
+      state,
+      country,
+      postalCode,
+      emergencyContactName,
+      emergencyContactPhone,
+      status: status || 'inactive', // Default to inactive if not provided
+      notes
+    });
+
+    // Fetch the created driver with its company information
+    const driverWithCompany = await Driver.findByPk(newDriver.id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // Return the created driver
+    res.status(201).json(driverWithCompany);
+  } catch (error) {
+    console.error('Error creating driver:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create driver',
+      details: error.message
+    });
+  }
+});
+
+// Update a driver
+app.put('/api/drivers/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the driver by ID
+    const driver = await Driver.findByPk(id);
+
+    // If driver not found, return 404
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    // Extract driver data from request body
+    const {
+      companyId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      licenseNumber,
+      licenseExpiry,
+      dateOfBirth,
+      address,
+      city,
+      state,
+      country,
+      postalCode,
+      emergencyContactName,
+      emergencyContactPhone,
+      status,
+      notes
+    } = req.body;
+
+    // Validate required fields
+    if (!companyId || !firstName || !lastName || !licenseNumber || !licenseExpiry) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: companyId, firstName, lastName, licenseNumber, and licenseExpiry are required'
+      });
+    }
+
+    // If license number is changed, check if it already exists
+    if (licenseNumber !== driver.licenseNumber) {
+      const existingDriver = await Driver.findOne({ where: { licenseNumber } });
+      if (existingDriver) {
+        return res.status(409).json({
+          success: false,
+          error: 'A driver with this license number already exists'
+        });
+      }
+    }
+
+    // Update the driver
+    await driver.update({
+      companyId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      licenseNumber,
+      licenseExpiry,
+      dateOfBirth,
+      address,
+      city,
+      state,
+      country,
+      postalCode,
+      emergencyContactName,
+      emergencyContactPhone,
+      status,
+      notes
+    });
+
+    // Fetch the updated driver with its company information
+    const updatedDriver = await Driver.findByPk(id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // Return the updated driver
+    res.json(updatedDriver);
+  } catch (error) {
+    console.error('Error updating driver:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update driver',
+      details: error.message
+    });
+  }
+});
+
+// Delete a driver
+app.delete('/api/drivers/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the driver by ID
+    const driver = await Driver.findByPk(id);
+
+    // If driver not found, return 404
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    // Delete the driver
+    await driver.destroy();
+
+    // Return success message
+    res.json({
+      success: true,
+      message: 'Driver deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting driver:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete driver',
+      details: error.message
+    });
   }
 });
 
