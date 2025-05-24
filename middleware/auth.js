@@ -99,9 +99,33 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// Middleware to check if user has admin role
+// Middleware to check if user has super admin role
+const isSuperAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'super_admin') {
+    next();
+  } else {
+    res.status(403).json({
+      success: false,
+      message: 'Access denied. Super admin role required.'
+    });
+  }
+};
+
+// Middleware to check if user has company admin role or higher
+const isCompanyAdmin = (req, res, next) => {
+  if (req.user && (req.user.role === 'super_admin' || req.user.role === 'company_admin')) {
+    next();
+  } else {
+    res.status(403).json({
+      success: false,
+      message: 'Access denied. Company admin role or higher required.'
+    });
+  }
+};
+
+// Middleware to check if user has admin role (legacy - now company_admin)
 const isAdmin = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
+  if (req.user && (req.user.role === 'super_admin' || req.user.role === 'company_admin' || req.user.role === 'admin')) {
     next();
   } else {
     res.status(403).json({
@@ -113,7 +137,7 @@ const isAdmin = (req, res, next) => {
 
 // Middleware to check if user has manager role or higher
 const isManager = (req, res, next) => {
-  if (req.user && (req.user.role === 'admin' || req.user.role === 'manager')) {
+  if (req.user && (req.user.role === 'super_admin' || req.user.role === 'company_admin' || req.user.role === 'admin' || req.user.role === 'manager')) {
     next();
   } else {
     res.status(403).json({
@@ -134,8 +158,19 @@ const isSameCompanyOrAdmin = (req, res, next) => {
     });
   }
 
-  if (req.user.role === 'admin' || req.user.companyId === companyId) {
+  // Super admins can access any company
+  if (req.user.role === 'super_admin') {
     next();
+  } else if (req.user.role === 'company_admin' || req.user.role === 'admin' || req.user.companyId === companyId) {
+    // Company admins and users can only access their own company
+    if (req.user.companyId === companyId) {
+      next();
+    } else {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only access resources from your own company.'
+      });
+    }
   } else {
     res.status(403).json({
       success: false,
@@ -209,6 +244,8 @@ const verifyTokenFast = (req, res, next) => {
 module.exports = {
   verifyToken,
   verifyTokenFast,
+  isSuperAdmin,
+  isCompanyAdmin,
   isAdmin,
   isManager,
   isSameCompanyOrAdmin,

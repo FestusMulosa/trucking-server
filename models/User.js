@@ -9,7 +9,7 @@ const User = sequelize.define('User', {
   },
   companyId: {
     type: DataTypes.INTEGER,
-    allowNull: false,
+    allowNull: true, // Allow null for super admins
     references: {
       model: 'companies',
       key: 'id'
@@ -36,7 +36,7 @@ const User = sequelize.define('User', {
     allowNull: false
   },
   role: {
-    type: DataTypes.ENUM('admin', 'manager', 'user'),
+    type: DataTypes.ENUM('super_admin', 'company_admin', 'manager', 'user'),
     defaultValue: 'user'
   },
   phone: {

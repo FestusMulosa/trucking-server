@@ -26,12 +26,12 @@ CREATE TABLE IF NOT EXISTS companies (
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  companyId INT NOT NULL,
+  companyId INT NULL, -- Allow null for super admins
   firstName VARCHAR(100) NOT NULL,
   lastName VARCHAR(100) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
-  role ENUM('admin', 'manager', 'user') DEFAULT 'user',
+  role ENUM('super_admin', 'company_admin', 'manager', 'user') DEFAULT 'user',
   phone VARCHAR(20),
   profilePicture VARCHAR(255),
   active BOOLEAN DEFAULT TRUE,

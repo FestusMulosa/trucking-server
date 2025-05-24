@@ -8,11 +8,22 @@ const { Op } = require('sequelize');
  */
 const getMaintenanceRecords = async (req, res) => {
   try {
-    const { companyId } = req.user;
+    const { companyId, role } = req.user;
     const { status, truckId, startDate, endDate } = req.query;
 
     // Build the where clause
-    const where = { companyId };
+    const where = {};
+
+    // Super admins can see all maintenance records, others only their company's
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      where.companyId = companyId;
+    }
 
     if (status) {
       where.status = status;
@@ -113,7 +124,15 @@ const getMaintenanceRecord = async (req, res) => {
  */
 const createMaintenanceRecord = async (req, res) => {
   try {
-    const { companyId } = req.user;
+    const { companyId, role } = req.user;
+
+    // For non-super admins, ensure they have a company
+    if (role !== 'super_admin' && !companyId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Company admin users must be associated with a company.'
+      });
+    }
     const {
       truckId,
       maintenanceType,
@@ -134,9 +153,14 @@ const createMaintenanceRecord = async (req, res) => {
       });
     }
 
-    // Check if the truck exists and belongs to the company
+    // Check if the truck exists and belongs to the company (for non-super admins)
+    const truckWhere = { id: truckId };
+    if (role !== 'super_admin') {
+      truckWhere.companyId = companyId;
+    }
+
     const truck = await Truck.findOne({
-      where: { id: truckId, companyId }
+      where: truckWhere
     });
 
     if (!truck) {
@@ -148,7 +172,7 @@ const createMaintenanceRecord = async (req, res) => {
 
     // Create the maintenance record
     const maintenanceRecord = await Maintenance.create({
-      companyId,
+      companyId: truck.companyId, // Use the truck's company ID
       truckId,
       maintenanceType,
       description,

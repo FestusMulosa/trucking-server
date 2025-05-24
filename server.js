@@ -18,7 +18,7 @@ const authController = require('./controllers/authController');
 const maintenanceController = require('./controllers/maintenanceController');
 const settingsController = require('./controllers/settingsController');
 const companyEmailController = require('./controllers/companyEmailController');
-const { verifyToken, verifyTokenFast, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
+const { verifyToken, verifyTokenFast, isSuperAdmin, isCompanyAdmin, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -236,12 +236,24 @@ app.get('/api/auth/profile', verifyToken, authController.getProfile);
 // Companies
 app.get('/api/companies', verifyToken, async (req, res) => {
   try {
+    const { companyId, role } = req.user;
     const { page = 1, limit = 50, active } = req.query;
     const offset = (page - 1) * limit;
 
     const whereClause = {};
     if (active !== undefined) {
       whereClause.active = active === 'true';
+    }
+
+    // Super admins can see all companies, others only see their own
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      whereClause.id = companyId;
     }
 
     const { count, rows: companies } = await Company.findAndCountAll({
@@ -273,9 +285,15 @@ app.get('/api/trucks', verifyTokenFast, async (req, res) => {
     const { page = 1, limit = 50, status, includeCompany = 'false' } = req.query;
     const offset = (page - 1) * limit;
 
-    // Build where clause - filter by company for non-admin users
+    // Build where clause - filter by company for non-super-admin users
     const whereClause = {};
-    if (role !== 'admin') {
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
       whereClause.companyId = companyId;
     }
     if (status) {
@@ -562,9 +580,15 @@ app.get('/api/drivers', verifyTokenFast, async (req, res) => {
     const { page = 1, limit = 50, status, includeCompany = 'false' } = req.query;
     const offset = (page - 1) * limit;
 
-    // Build where clause - filter by company for non-admin users
+    // Build where clause - filter by company for non-super-admin users
     const whereClause = {};
-    if (role !== 'admin') {
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
       whereClause.companyId = companyId;
     }
     if (status) {
@@ -991,8 +1015,9 @@ app.post('/api/drivers/:driverId/unassign-truck', verifyToken, async (req, res) 
 });
 
 // Users
-app.get('/api/users', verifyToken, isAdmin, async (req, res) => {
+app.get('/api/users', verifyToken, isCompanyAdmin, async (req, res) => {
   try {
+    const { companyId: userCompanyId, role: userRole } = req.user;
     const { page = 1, limit = 50, role, active, companyId: filterCompanyId } = req.query;
     const offset = (page - 1) * limit;
 
@@ -1004,8 +1029,21 @@ app.get('/api/users', verifyToken, isAdmin, async (req, res) => {
     if (active !== undefined) {
       whereClause.active = active === 'true';
     }
-    if (filterCompanyId) {
-      whereClause.companyId = filterCompanyId;
+
+    // Super admins can see all users, company admins only see their company users
+    if (userRole === 'super_admin') {
+      if (filterCompanyId) {
+        whereClause.companyId = filterCompanyId;
+      }
+    } else {
+      // Company admins can only see users from their own company
+      if (!userCompanyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      whereClause.companyId = userCompanyId;
     }
 
     const { count, rows: users } = await User.findAndCountAll({
