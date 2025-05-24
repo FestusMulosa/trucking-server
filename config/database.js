@@ -15,10 +15,38 @@ const sequelize = new Sequelize(
     port: process.env.DB_PORT || 3306,
     logging: process.env.NODE_ENV === 'development' ? console.log : false,
     pool: {
-      max: 5,
-      min: 0,
-      acquire: 30000,
-      idle: 10000
+      max: 15,           // Increased from 5 to handle more concurrent requests
+      min: 2,            // Keep minimum connections alive
+      acquire: 10000,    // Reduced from 30000ms to 10000ms
+      idle: 10000,       // Keep idle timeout the same
+      evict: 1000,       // Check for idle connections every second
+      handleDisconnects: true
+    },
+    dialectOptions: {
+      connectTimeout: 10000,  // 10 seconds connection timeout
+      acquireTimeout: 10000,  // 10 seconds acquire timeout
+      timeout: 10000,         // 10 seconds query timeout
+      charset: 'utf8mb4'
+    },
+    retry: {
+      match: [
+        /ETIMEDOUT/,
+        /EHOSTUNREACH/,
+        /ECONNRESET/,
+        /ECONNREFUSED/,
+        /ETIMEDOUT/,
+        /ESOCKETTIMEDOUT/,
+        /EHOSTUNREACH/,
+        /EPIPE/,
+        /EAI_AGAIN/,
+        /SequelizeConnectionError/,
+        /SequelizeConnectionRefusedError/,
+        /SequelizeHostNotFoundError/,
+        /SequelizeHostNotReachableError/,
+        /SequelizeInvalidConnectionError/,
+        /SequelizeConnectionTimedOutError/
+      ],
+      max: 3
     }
   }
 );

@@ -3,6 +3,7 @@ const nodemailer = require('nodemailer');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
+const compression = require('compression');
 
 // Load environment variables
 dotenv.config();
@@ -15,18 +16,20 @@ const { Company, User, Truck, Driver, Maintenance } = require('./models');
 // Import controllers and middleware
 const authController = require('./controllers/authController');
 const maintenanceController = require('./controllers/maintenanceController');
-const { verifyToken, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
+const { verifyToken, verifyTokenFast, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+app.use(compression()); // Enable gzip compression
 app.use(cors({
   origin: '*', // Allow all origins
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' })); // Increase limit for large payloads
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Create a transporter object
 let transporter = null;
@@ -208,6 +211,20 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Performance monitoring endpoint
+app.get('/api/performance', verifyToken, (req, res) => {
+  const { getCacheStats } = require('./middleware/auth');
+
+  res.json({
+    status: 'ok',
+    message: 'Performance statistics',
+    authCache: getCacheStats(),
+    memoryUsage: process.memoryUsage(),
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Authentication routes
 app.post('/api/auth/register', authController.register);
 app.post('/api/auth/login', authController.login);
@@ -217,8 +234,30 @@ app.get('/api/auth/profile', verifyToken, authController.getProfile);
 // Companies
 app.get('/api/companies', verifyToken, async (req, res) => {
   try {
-    const companies = await Company.findAll();
-    res.json(companies);
+    const { page = 1, limit = 50, active } = req.query;
+    const offset = (page - 1) * limit;
+
+    const whereClause = {};
+    if (active !== undefined) {
+      whereClause.active = active === 'true';
+    }
+
+    const { count, rows: companies } = await Company.findAndCountAll({
+      where: whereClause,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['name', 'ASC']]
+    });
+
+    res.json({
+      companies,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching companies:', error);
     res.status(500).json({ error: 'Failed to fetch companies' });
@@ -226,14 +265,49 @@ app.get('/api/companies', verifyToken, async (req, res) => {
 });
 
 // Trucks
-app.get('/api/trucks', verifyToken, async (req, res) => {
+app.get('/api/trucks', verifyTokenFast, async (req, res) => {
   try {
-    const trucks = await Truck.findAll({
-      include: [
-        { model: Company, as: 'company' }
-      ]
+    const { companyId, role } = req.user;
+    const { page = 1, limit = 50, status, includeCompany = 'false' } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Build where clause - filter by company for non-admin users
+    const whereClause = {};
+    if (role !== 'admin') {
+      whereClause.companyId = companyId;
+    }
+    if (status) {
+      whereClause.status = status;
+    }
+
+    // Build include array conditionally
+    const includeArray = [];
+    if (includeCompany === 'true') {
+      includeArray.push({
+        model: Company,
+        as: 'company',
+        attributes: ['id', 'name'] // Only fetch necessary fields
+      });
+    }
+
+    const { count, rows: trucks } = await Truck.findAndCountAll({
+      where: whereClause,
+      include: includeArray,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['updatedAt', 'DESC']],
+      attributes: { exclude: ['createdAt'] } // Exclude unnecessary fields
     });
-    res.json(trucks);
+
+    res.json({
+      trucks,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching trucks:', error);
     res.status(500).json({ error: 'Failed to fetch trucks' });
@@ -317,7 +391,7 @@ app.post('/api/trucks', verifyToken, async (req, res) => {
 });
 
 // Get a single truck by ID
-app.get('/api/trucks/:id', verifyToken, async (req, res) => {
+app.get('/api/trucks/:id', verifyTokenFast, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -472,14 +546,49 @@ app.delete('/api/trucks/:id', verifyToken, async (req, res) => {
 });
 
 // Drivers
-app.get('/api/drivers', verifyToken, async (req, res) => {
+app.get('/api/drivers', verifyTokenFast, async (req, res) => {
   try {
-    const drivers = await Driver.findAll({
-      include: [
-        { model: Company, as: 'company' }
-      ]
+    const { companyId, role } = req.user;
+    const { page = 1, limit = 50, status, includeCompany = 'false' } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Build where clause - filter by company for non-admin users
+    const whereClause = {};
+    if (role !== 'admin') {
+      whereClause.companyId = companyId;
+    }
+    if (status) {
+      whereClause.status = status;
+    }
+
+    // Build include array conditionally
+    const includeArray = [];
+    if (includeCompany === 'true') {
+      includeArray.push({
+        model: Company,
+        as: 'company',
+        attributes: ['id', 'name'] // Only fetch necessary fields
+      });
+    }
+
+    const { count, rows: drivers } = await Driver.findAndCountAll({
+      where: whereClause,
+      include: includeArray,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['firstName', 'ASC'], ['lastName', 'ASC']],
+      attributes: { exclude: ['createdAt'] } // Exclude unnecessary fields
     });
-    res.json(drivers);
+
+    res.json({
+      drivers,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching drivers:', error);
     res.status(500).json({ error: 'Failed to fetch drivers' });
@@ -487,7 +596,7 @@ app.get('/api/drivers', verifyToken, async (req, res) => {
 });
 
 // Get a single driver by ID
-app.get('/api/drivers/:id', verifyToken, async (req, res) => {
+app.get('/api/drivers/:id', verifyTokenFast, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -726,13 +835,45 @@ app.delete('/api/drivers/:id', verifyToken, async (req, res) => {
 // Users
 app.get('/api/users', verifyToken, isAdmin, async (req, res) => {
   try {
-    const users = await User.findAll({
+    const { page = 1, limit = 50, role, active, companyId: filterCompanyId } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Build where clause
+    const whereClause = {};
+    if (role) {
+      whereClause.role = role;
+    }
+    if (active !== undefined) {
+      whereClause.active = active === 'true';
+    }
+    if (filterCompanyId) {
+      whereClause.companyId = filterCompanyId;
+    }
+
+    const { count, rows: users } = await User.findAndCountAll({
+      where: whereClause,
       include: [
-        { model: Company, as: 'company' }
+        {
+          model: Company,
+          as: 'company',
+          attributes: ['id', 'name'] // Only fetch necessary fields
+        }
       ],
-      attributes: { exclude: ['password'] } // Don't return passwords
+      attributes: { exclude: ['password', 'createdAt'] }, // Don't return passwords and createdAt
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['firstName', 'ASC'], ['lastName', 'ASC']]
     });
-    res.json(users);
+
+    res.json({
+      users,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
