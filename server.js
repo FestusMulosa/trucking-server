@@ -11,11 +11,13 @@ dotenv.config();
 // Import database and models
 const { testConnection } = require('./config/database');
 const { initializeDatabase } = require('./utils/initDb');
-const { Company, User, Truck, Driver, Maintenance } = require('./models');
+const { Company, User, Truck, Driver, Maintenance, PlatformSetting, EmailRecipient, CompanyEmail } = require('./models');
 
 // Import controllers and middleware
 const authController = require('./controllers/authController');
 const maintenanceController = require('./controllers/maintenanceController');
+const settingsController = require('./controllers/settingsController');
+const companyEmailController = require('./controllers/companyEmailController');
 const { verifyToken, verifyTokenFast, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
 
 const app = express();
@@ -895,6 +897,22 @@ app.put('/api/maintenance/:id', verifyToken, maintenanceController.updateMainten
 
 // Delete a maintenance record
 app.delete('/api/maintenance/:id', verifyToken, maintenanceController.deleteMaintenanceRecord);
+
+// Settings routes
+app.get('/api/settings', verifyToken, settingsController.getSettings);
+app.put('/api/settings', verifyToken, settingsController.updateSettings);
+
+// Email recipients routes (legacy)
+app.get('/api/email-recipients', verifyToken, settingsController.getEmailRecipients);
+app.post('/api/email-recipients', verifyToken, settingsController.addEmailRecipient);
+app.put('/api/email-recipients/:id', verifyToken, settingsController.updateEmailRecipient);
+app.delete('/api/email-recipients/:id', verifyToken, settingsController.deleteEmailRecipient);
+
+// Company emails routes (new system)
+app.get('/api/companies/:companyId/emails', verifyToken, companyEmailController.getCompanyEmails);
+app.post('/api/companies/:companyId/emails', verifyToken, companyEmailController.addCompanyEmail);
+app.put('/api/companies/:companyId/emails/:emailId', verifyToken, companyEmailController.updateCompanyEmail);
+app.delete('/api/companies/:companyId/emails/:emailId', verifyToken, companyEmailController.deleteCompanyEmail);
 
 // Initialize database and start the server
 (async () => {
