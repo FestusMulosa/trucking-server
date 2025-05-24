@@ -15,6 +15,10 @@ Truck.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
 Company.hasMany(Driver, { foreignKey: 'companyId', as: 'drivers' });
 Driver.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
 
+// Driver-Truck relationship
+Truck.belongsTo(Driver, { foreignKey: 'currentDriverId', as: 'currentDriver' });
+Driver.hasOne(Truck, { foreignKey: 'currentDriverId', as: 'assignedTruck' });
+
 Company.hasMany(User, { foreignKey: 'companyId', as: 'users' });
 User.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
 

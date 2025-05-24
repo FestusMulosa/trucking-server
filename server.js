@@ -292,6 +292,14 @@ app.get('/api/trucks', verifyTokenFast, async (req, res) => {
       });
     }
 
+    // Always include current driver information
+    includeArray.push({
+      model: Driver,
+      as: 'currentDriver',
+      attributes: ['id', 'firstName', 'lastName', 'licenseNumber'],
+      required: false // LEFT JOIN to include trucks without drivers
+    });
+
     const { count, rows: trucks } = await Truck.findAndCountAll({
       where: whereClause,
       include: includeArray,
@@ -573,6 +581,14 @@ app.get('/api/drivers', verifyTokenFast, async (req, res) => {
       });
     }
 
+    // Always include assigned truck information
+    includeArray.push({
+      model: Truck,
+      as: 'assignedTruck',
+      attributes: ['id', 'name', 'numberPlate', 'status'],
+      required: false // LEFT JOIN to include drivers without trucks
+    });
+
     const { count, rows: drivers } = await Driver.findAndCountAll({
       where: whereClause,
       include: includeArray,
@@ -816,6 +832,12 @@ app.delete('/api/drivers/:id', verifyToken, async (req, res) => {
       });
     }
 
+    // Before deleting, unassign the driver from any trucks
+    await Truck.update(
+      { currentDriverId: null },
+      { where: { currentDriverId: id } }
+    );
+
     // Delete the driver
     await driver.destroy();
 
@@ -829,6 +851,140 @@ app.delete('/api/drivers/:id', verifyToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to delete driver',
+      details: error.message
+    });
+  }
+});
+
+// Assign driver to truck
+app.post('/api/drivers/:driverId/assign-truck/:truckId', verifyToken, async (req, res) => {
+  try {
+    const { driverId, truckId } = req.params;
+
+    // Find the driver and truck
+    const driver = await Driver.findByPk(driverId);
+    const truck = await Truck.findByPk(truckId);
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    if (!truck) {
+      return res.status(404).json({
+        success: false,
+        error: 'Truck not found'
+      });
+    }
+
+    // Check if the truck is already assigned to another driver
+    if (truck.currentDriverId && truck.currentDriverId !== parseInt(driverId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Truck is already assigned to another driver'
+      });
+    }
+
+    // Check if the driver is already assigned to another truck
+    const currentTruck = await Truck.findOne({ where: { currentDriverId: driverId } });
+    if (currentTruck && currentTruck.id !== parseInt(truckId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Driver is already assigned to another truck'
+      });
+    }
+
+    // Update the truck with the driver assignment
+    await truck.update({
+      currentDriverId: driverId,
+      lastUpdate: new Date()
+    });
+
+    // Fetch the updated truck with driver information
+    const updatedTruck = await Truck.findByPk(truckId, {
+      include: [
+        { model: Company, as: 'company' },
+        {
+          model: Driver,
+          as: 'currentDriver',
+          attributes: ['id', 'firstName', 'lastName', 'licenseNumber']
+        }
+      ]
+    });
+
+    // Fetch the updated driver with truck information
+    const updatedDriver = await Driver.findByPk(driverId, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver assigned to truck successfully',
+      truck: updatedTruck,
+      driver: updatedDriver
+    });
+  } catch (error) {
+    console.error('Error assigning driver to truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to assign driver to truck',
+      details: error.message
+    });
+  }
+});
+
+// Unassign driver from truck
+app.post('/api/drivers/:driverId/unassign-truck', verifyToken, async (req, res) => {
+  try {
+    const { driverId } = req.params;
+
+    // Find the driver
+    const driver = await Driver.findByPk(driverId);
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    // Find the truck assigned to this driver
+    const truck = await Truck.findOne({ where: { currentDriverId: driverId } });
+    if (!truck) {
+      return res.status(400).json({
+        success: false,
+        error: 'Driver is not assigned to any truck'
+      });
+    }
+
+    // Unassign the driver from the truck
+    await truck.update({
+      currentDriverId: null,
+      lastUpdate: new Date()
+    });
+
+    // Fetch the updated truck
+    const updatedTruck = await Truck.findByPk(truck.id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // Fetch the updated driver
+    const updatedDriver = await Driver.findByPk(driverId, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver unassigned from truck successfully',
+      truck: updatedTruck,
+      driver: updatedDriver
+    });
+  } catch (error) {
+    console.error('Error unassigning driver from truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to unassign driver from truck',
       details: error.message
     });
   }
