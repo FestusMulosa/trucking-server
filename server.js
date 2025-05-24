@@ -3,6 +3,7 @@ const nodemailer = require('nodemailer');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
+const compression = require('compression');
 
 // Load environment variables
 dotenv.config();
@@ -10,23 +11,27 @@ dotenv.config();
 // Import database and models
 const { testConnection } = require('./config/database');
 const { initializeDatabase } = require('./utils/initDb');
-const { Company, User, Truck, Driver, Maintenance } = require('./models');
+const { Company, User, Truck, Driver, Maintenance, PlatformSetting, EmailRecipient, CompanyEmail } = require('./models');
 
 // Import controllers and middleware
 const authController = require('./controllers/authController');
 const maintenanceController = require('./controllers/maintenanceController');
-const { verifyToken, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
+const settingsController = require('./controllers/settingsController');
+const companyEmailController = require('./controllers/companyEmailController');
+const { verifyToken, verifyTokenFast, isSuperAdmin, isCompanyAdmin, isAdmin, isManager, isSameCompanyOrAdmin } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+app.use(compression()); // Enable gzip compression
 app.use(cors({
   origin: '*', // Allow all origins
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' })); // Increase limit for large payloads
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Create a transporter object
 let transporter = null;
@@ -208,6 +213,20 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Performance monitoring endpoint
+app.get('/api/performance', verifyToken, (req, res) => {
+  const { getCacheStats } = require('./middleware/auth');
+
+  res.json({
+    status: 'ok',
+    message: 'Performance statistics',
+    authCache: getCacheStats(),
+    memoryUsage: process.memoryUsage(),
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Authentication routes
 app.post('/api/auth/register', authController.register);
 app.post('/api/auth/login', authController.login);
@@ -217,8 +236,42 @@ app.get('/api/auth/profile', verifyToken, authController.getProfile);
 // Companies
 app.get('/api/companies', verifyToken, async (req, res) => {
   try {
-    const companies = await Company.findAll();
-    res.json(companies);
+    const { companyId, role } = req.user;
+    const { page = 1, limit = 50, active } = req.query;
+    const offset = (page - 1) * limit;
+
+    const whereClause = {};
+    if (active !== undefined) {
+      whereClause.active = active === 'true';
+    }
+
+    // Super admins can see all companies, others only see their own
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      whereClause.id = companyId;
+    }
+
+    const { count, rows: companies } = await Company.findAndCountAll({
+      where: whereClause,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['name', 'ASC']]
+    });
+
+    res.json({
+      companies,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching companies:', error);
     res.status(500).json({ error: 'Failed to fetch companies' });
@@ -226,14 +279,63 @@ app.get('/api/companies', verifyToken, async (req, res) => {
 });
 
 // Trucks
-app.get('/api/trucks', verifyToken, async (req, res) => {
+app.get('/api/trucks', verifyTokenFast, async (req, res) => {
   try {
-    const trucks = await Truck.findAll({
-      include: [
-        { model: Company, as: 'company' }
-      ]
+    const { companyId, role } = req.user;
+    const { page = 1, limit = 50, status, includeCompany = 'false' } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Build where clause - filter by company for non-super-admin users
+    const whereClause = {};
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      whereClause.companyId = companyId;
+    }
+    if (status) {
+      whereClause.status = status;
+    }
+
+    // Build include array conditionally
+    const includeArray = [];
+    if (includeCompany === 'true') {
+      includeArray.push({
+        model: Company,
+        as: 'company',
+        attributes: ['id', 'name'] // Only fetch necessary fields
+      });
+    }
+
+    // Always include current driver information
+    includeArray.push({
+      model: Driver,
+      as: 'currentDriver',
+      attributes: ['id', 'firstName', 'lastName', 'licenseNumber'],
+      required: false // LEFT JOIN to include trucks without drivers
     });
-    res.json(trucks);
+
+    const { count, rows: trucks } = await Truck.findAndCountAll({
+      where: whereClause,
+      include: includeArray,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['updatedAt', 'DESC']],
+      attributes: { exclude: ['createdAt'] } // Exclude unnecessary fields
+    });
+
+    res.json({
+      trucks,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching trucks:', error);
     res.status(500).json({ error: 'Failed to fetch trucks' });
@@ -317,7 +419,7 @@ app.post('/api/trucks', verifyToken, async (req, res) => {
 });
 
 // Get a single truck by ID
-app.get('/api/trucks/:id', verifyToken, async (req, res) => {
+app.get('/api/trucks/:id', verifyTokenFast, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -472,14 +574,63 @@ app.delete('/api/trucks/:id', verifyToken, async (req, res) => {
 });
 
 // Drivers
-app.get('/api/drivers', verifyToken, async (req, res) => {
+app.get('/api/drivers', verifyTokenFast, async (req, res) => {
   try {
-    const drivers = await Driver.findAll({
-      include: [
-        { model: Company, as: 'company' }
-      ]
+    const { companyId, role } = req.user;
+    const { page = 1, limit = 50, status, includeCompany = 'false' } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Build where clause - filter by company for non-super-admin users
+    const whereClause = {};
+    if (role !== 'super_admin') {
+      if (!companyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      whereClause.companyId = companyId;
+    }
+    if (status) {
+      whereClause.status = status;
+    }
+
+    // Build include array conditionally
+    const includeArray = [];
+    if (includeCompany === 'true') {
+      includeArray.push({
+        model: Company,
+        as: 'company',
+        attributes: ['id', 'name'] // Only fetch necessary fields
+      });
+    }
+
+    // Always include assigned truck information
+    includeArray.push({
+      model: Truck,
+      as: 'assignedTruck',
+      attributes: ['id', 'name', 'numberPlate', 'status'],
+      required: false // LEFT JOIN to include drivers without trucks
     });
-    res.json(drivers);
+
+    const { count, rows: drivers } = await Driver.findAndCountAll({
+      where: whereClause,
+      include: includeArray,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['firstName', 'ASC'], ['lastName', 'ASC']],
+      attributes: { exclude: ['createdAt'] } // Exclude unnecessary fields
+    });
+
+    res.json({
+      drivers,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching drivers:', error);
     res.status(500).json({ error: 'Failed to fetch drivers' });
@@ -487,7 +638,7 @@ app.get('/api/drivers', verifyToken, async (req, res) => {
 });
 
 // Get a single driver by ID
-app.get('/api/drivers/:id', verifyToken, async (req, res) => {
+app.get('/api/drivers/:id', verifyTokenFast, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -705,6 +856,12 @@ app.delete('/api/drivers/:id', verifyToken, async (req, res) => {
       });
     }
 
+    // Before deleting, unassign the driver from any trucks
+    await Truck.update(
+      { currentDriverId: null },
+      { where: { currentDriverId: id } }
+    );
+
     // Delete the driver
     await driver.destroy();
 
@@ -723,16 +880,196 @@ app.delete('/api/drivers/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Users
-app.get('/api/users', verifyToken, isAdmin, async (req, res) => {
+// Assign driver to truck
+app.post('/api/drivers/:driverId/assign-truck/:truckId', verifyToken, async (req, res) => {
   try {
-    const users = await User.findAll({
-      include: [
-        { model: Company, as: 'company' }
-      ],
-      attributes: { exclude: ['password'] } // Don't return passwords
+    const { driverId, truckId } = req.params;
+
+    // Find the driver and truck
+    const driver = await Driver.findByPk(driverId);
+    const truck = await Truck.findByPk(truckId);
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    if (!truck) {
+      return res.status(404).json({
+        success: false,
+        error: 'Truck not found'
+      });
+    }
+
+    // Check if the truck is already assigned to another driver
+    if (truck.currentDriverId && truck.currentDriverId !== parseInt(driverId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Truck is already assigned to another driver'
+      });
+    }
+
+    // Check if the driver is already assigned to another truck
+    const currentTruck = await Truck.findOne({ where: { currentDriverId: driverId } });
+    if (currentTruck && currentTruck.id !== parseInt(truckId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Driver is already assigned to another truck'
+      });
+    }
+
+    // Update the truck with the driver assignment
+    await truck.update({
+      currentDriverId: driverId,
+      lastUpdate: new Date()
     });
-    res.json(users);
+
+    // Fetch the updated truck with driver information
+    const updatedTruck = await Truck.findByPk(truckId, {
+      include: [
+        { model: Company, as: 'company' },
+        {
+          model: Driver,
+          as: 'currentDriver',
+          attributes: ['id', 'firstName', 'lastName', 'licenseNumber']
+        }
+      ]
+    });
+
+    // Fetch the updated driver with truck information
+    const updatedDriver = await Driver.findByPk(driverId, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver assigned to truck successfully',
+      truck: updatedTruck,
+      driver: updatedDriver
+    });
+  } catch (error) {
+    console.error('Error assigning driver to truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to assign driver to truck',
+      details: error.message
+    });
+  }
+});
+
+// Unassign driver from truck
+app.post('/api/drivers/:driverId/unassign-truck', verifyToken, async (req, res) => {
+  try {
+    const { driverId } = req.params;
+
+    // Find the driver
+    const driver = await Driver.findByPk(driverId);
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
+    }
+
+    // Find the truck assigned to this driver
+    const truck = await Truck.findOne({ where: { currentDriverId: driverId } });
+    if (!truck) {
+      return res.status(400).json({
+        success: false,
+        error: 'Driver is not assigned to any truck'
+      });
+    }
+
+    // Unassign the driver from the truck
+    await truck.update({
+      currentDriverId: null,
+      lastUpdate: new Date()
+    });
+
+    // Fetch the updated truck
+    const updatedTruck = await Truck.findByPk(truck.id, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    // Fetch the updated driver
+    const updatedDriver = await Driver.findByPk(driverId, {
+      include: [{ model: Company, as: 'company' }]
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver unassigned from truck successfully',
+      truck: updatedTruck,
+      driver: updatedDriver
+    });
+  } catch (error) {
+    console.error('Error unassigning driver from truck:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to unassign driver from truck',
+      details: error.message
+    });
+  }
+});
+
+// Users
+app.get('/api/users', verifyToken, isCompanyAdmin, async (req, res) => {
+  try {
+    const { companyId: userCompanyId, role: userRole } = req.user;
+    const { page = 1, limit = 50, role, active, companyId: filterCompanyId } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Build where clause
+    const whereClause = {};
+    if (role) {
+      whereClause.role = role;
+    }
+    if (active !== undefined) {
+      whereClause.active = active === 'true';
+    }
+
+    // Super admins can see all users, company admins only see their company users
+    if (userRole === 'super_admin') {
+      if (filterCompanyId) {
+        whereClause.companyId = filterCompanyId;
+      }
+    } else {
+      // Company admins can only see users from their own company
+      if (!userCompanyId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Company admin users must be associated with a company.'
+        });
+      }
+      whereClause.companyId = userCompanyId;
+    }
+
+    const { count, rows: users } = await User.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: Company,
+          as: 'company',
+          attributes: ['id', 'name'] // Only fetch necessary fields
+        }
+      ],
+      attributes: { exclude: ['password', 'createdAt'] }, // Don't return passwords and createdAt
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['firstName', 'ASC'], ['lastName', 'ASC']]
+    });
+
+    res.json({
+      users,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -754,6 +1091,22 @@ app.put('/api/maintenance/:id', verifyToken, maintenanceController.updateMainten
 
 // Delete a maintenance record
 app.delete('/api/maintenance/:id', verifyToken, maintenanceController.deleteMaintenanceRecord);
+
+// Settings routes
+app.get('/api/settings', verifyToken, settingsController.getSettings);
+app.put('/api/settings', verifyToken, settingsController.updateSettings);
+
+// Email recipients routes (legacy)
+app.get('/api/email-recipients', verifyToken, settingsController.getEmailRecipients);
+app.post('/api/email-recipients', verifyToken, settingsController.addEmailRecipient);
+app.put('/api/email-recipients/:id', verifyToken, settingsController.updateEmailRecipient);
+app.delete('/api/email-recipients/:id', verifyToken, settingsController.deleteEmailRecipient);
+
+// Company emails routes (new system)
+app.get('/api/companies/:companyId/emails', verifyToken, companyEmailController.getCompanyEmails);
+app.post('/api/companies/:companyId/emails', verifyToken, companyEmailController.addCompanyEmail);
+app.put('/api/companies/:companyId/emails/:emailId', verifyToken, companyEmailController.updateCompanyEmail);
+app.delete('/api/companies/:companyId/emails/:emailId', verifyToken, companyEmailController.deleteCompanyEmail);
 
 // Initialize database and start the server
 (async () => {

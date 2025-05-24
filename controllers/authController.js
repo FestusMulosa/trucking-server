@@ -30,9 +30,17 @@ const register = async (req, res) => {
       role: role || 'user' // Default to 'user' if role is not provided
     });
 
-    // Generate JWT token
+    // Generate JWT token with more user data to avoid database lookups
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, companyId: user.companyId },
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        companyId: user.companyId,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        active: user.active
+      },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
@@ -95,9 +103,17 @@ const login = async (req, res) => {
     // Update last login timestamp
     await user.update({ lastLogin: new Date() });
 
-    // Generate JWT token
+    // Generate JWT token with more user data to avoid database lookups
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, companyId: user.companyId },
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        companyId: user.companyId,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        active: user.active
+      },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
